@@ -120,35 +120,58 @@
 ;; ASYNCHRONOUS EXECUTION
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(defn- take-until-closed
+  "Given a channel, takes messages from that channel until it is closed
+  then returns a sequence of all messages it receives"
+  ([channel] (take-until-closed [] channel))
+  ([result-seq channel]
+   (let [message (a/<!! channel)]
+     (if message
+       (recur (conj result-seq message) channel)
+       result-seq))))
+
 (defn boot
   "Boot up an intcode computer. Provide the program, a channel to receive input, and an atom where the state of 
    the computer can be viewed. Returns a channel where the computer will output. The computer will pause execution
    until its output is taken."
-  [program in state-atom]
-  (let [out (a/chan)]
-    (a/go-loop [{:keys [pointer memory] :as state} {:pointer 0 :memory program}]
-      (reset! state-atom state)
-      (let [[opcode] (opcode+modes (memory pointer))
-            instr (instruction state)]
-        (-> (case opcode
-              99 (do (a/close! in) (a/close! out) (reset! state-atom (-> state (assoc :halted true))))
-              1  (recur (-> state (assoc :memory (add  instr memory)) (update :pointer + (count instr))))
-              2  (recur (-> state (assoc :memory (mult instr memory)) (update :pointer + (count instr))))
+  ([program in state-atom] (boot program in state-atom nil))
+  ([program in state-atom final]
+   (let [out (a/chan)]
+     (a/go-loop [{:keys [pointer memory] :as state} {:pointer 0 :memory program}]
+       (reset! state-atom state)
+       (let [[opcode] (opcode+modes (memory pointer))
+             instr (instruction state)]
+         (-> (case opcode
+               99 (do (when final (a/>! final (first (:outputs state)))) (a/close! in) (a/close! out) (reset! state-atom (-> state (assoc :halted true))))
+               1  (recur (-> state (assoc :memory (add  instr memory)) (update :pointer + (count instr))))
+               2  (recur (-> state (assoc :memory (mult instr memory)) (update :pointer + (count instr))))
 
-              3  (recur (-> state
-                            (assoc :memory (input (a/<! in) instr memory))
-                            (update :pointer + (count instr))))
+               3  (recur (-> state
+                             (assoc :memory (input (a/<! in) instr memory))
+                             (update :pointer + (count instr))))
 
-              4  (let [output (output instr memory)]
-                   (a/>! out output)
-                   (recur (-> state (update :outputs conj output) (update :pointer + (count instr)))))
+               4  (let [output (output instr memory)]
+                    (a/>! out output)
+                    (recur (-> state (update :outputs conj output) (update :pointer + (count instr)))))
 
-              5  (recur (assoc state :pointer (jump-if-true pointer instr memory)))
-              6  (recur (assoc state :pointer (jump-if-false pointer instr memory)))
+               5  (recur (assoc state :pointer (jump-if-true pointer instr memory)))
+               6  (recur (assoc state :pointer (jump-if-false pointer instr memory)))
 
-              7  (recur (-> state (assoc :memory (less-than instr memory)) (update :pointer + (count instr))))
-              8  (recur (-> state (assoc :memory (equal-to instr memory)) (update :pointer + (count instr))))))))
-    out))
+               7  (recur (-> state (assoc :memory (less-than instr memory)) (update :pointer + (count instr))))
+               8  (recur (-> state (assoc :memory (equal-to instr memory)) (update :pointer + (count instr))))))))
+     out)))
+
+(defn boot-with-input
+  ([program in state-atom initial-input]
+   (boot-with-input program in state-atom initial-input nil))
+
+  ([program in state-atom initial-input final]
+   (let [out (boot program in state-atom final)]
+     (a/>!! in initial-input)
+     out)))
+
+(comment
+  (take-until-closed (boot-with-input [3,0,4,0,99] (a/chan) (atom {}) 123)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; TESTS
@@ -235,16 +258,6 @@
        1106,0,36,98,0,0,1002,21,125,20,4,20,1105,1,46,104
        999,1105,1,46,1101,1000,1,20,4,20,1105,1,46,98,99]
       9 1001)))
-
-(defn- take-until-closed
-  "Given a channel, takes messages from that channel until it is closed
-  then returns a sequence of all messages it receives"
-  ([channel] (take-until-closed [] channel))
-  ([result-seq channel]
-   (let [message (a/<!! channel)]
-     (if message
-       (recur (conj result-seq message) channel)
-       result-seq))))
 
 (deftest async-boot-tests
   (let [st (atom {})]
