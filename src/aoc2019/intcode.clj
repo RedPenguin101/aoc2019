@@ -15,17 +15,6 @@
    After an instruction finishes, the instruction pointer increases by the number of values in the instruction
    ")
 
-"Day 5: Thermal Environment Supervision Terminal
- 
- two new instructions
- Opcode 3 takes a single integer as input and saves it to the position given by its only parameter.
- Opcode 4 outputs the value of its only parameter.
- 
- Parameter modes are stored in the same value as the instruction's opcode. 
- The opcode is a two-digit number based only on the ones and tens digit of the value
- Parameter modes are single digits, one per parameter, read right-to-left from the opcode:
- Any missing modes are 0"
-
 (comment
   "instr fns get input like"
   '[[opcode [mode-a mode-b mode-c]] param-a param-b param-c]
@@ -41,8 +30,32 @@
         vb (if (= :imm pb) b (memory b))]
     (assoc memory c (* va vb))))
 
-(defn input [input [_ a] memory] (assoc memory a input))
+(defn input [input [_ a] memory]
+  (if (nil? input)
+    (throw (ex-info "Input cannot be nil for input instruction" {:mem-dump memory}))
+    (assoc memory a input)))
+
 (defn output [[[_ [pa]] a] memory] (if (= :imm pa) a (memory a)))
+
+(defn jump-if-true [pointer [[_op [pa pb]] a b] memory]
+  (let [va (if (= :imm pa) a (memory a))
+        vb (if (= :imm pb) b (memory b))]
+    (if (zero? va) (+ pointer 3) vb)))
+
+(defn jump-if-false [pointer [[_op [pa pb]] a b] memory]
+  (let [va (if (= :imm pa) a (memory a))
+        vb (if (= :imm pb) b (memory b))]
+    (if (zero? va) vb (+ pointer 3))))
+
+(defn less-than [[[_op [pa pb]] a b c] memory]
+  (let [va (if (= :imm pa) a (memory a))
+        vb (if (= :imm pb) b (memory b))]
+    (if (< va vb) (assoc memory c 1) (assoc memory c 0))))
+
+(defn equal-to [[[_op [pa pb]] a b c] memory]
+  (let [va (if (= :imm pa) a (memory a))
+        vb (if (= :imm pb) b (memory b))]
+    (if (= va vb) (assoc memory c 1) (assoc memory c 0))))
 
 (defn opcode+modes
   "Returns a tuple of opcode and modes, like [5 [:imm :pos :pos]]
@@ -58,7 +71,8 @@
    the number of params are correct for the opcode"
   [{:keys [pointer memory]}]
   (let [[opcode modes] (opcode+modes (memory pointer))]
-    (assoc (subvec memory pointer (+ ({99 0, 1 4, 2 4, 3 2, 4 2} opcode) pointer))
+    (assoc (subvec memory pointer (+ ({99 0, 1 4, 2 4, 3 2, 4 2, 5 3, 6 3, 7 4, 8 4}
+                                      opcode) pointer))
            0
            [opcode modes])))
 
@@ -66,12 +80,21 @@
   (let [[opcode] (opcode+modes (memory pointer))
         instr (instruction state)]
     (-> (case opcode
-          99 (assoc state :halted true)
-          1  (assoc state :memory (add  instr memory))
-          2  (assoc state :memory (mult instr memory))
-          3  (-> state (assoc :memory (input (first inputs) instr memory)) (update :inputs rest))
-          4  (update state :outputs conj (output instr memory)))
-        (update :pointer + (count instr)))))
+          99 (-> state (assoc :halted true))
+          1  (-> state (assoc :memory (add  instr memory)) (update :pointer + (count instr)))
+          2  (-> state (assoc :memory (mult instr memory)) (update :pointer + (count instr)))
+
+          3  (-> state (assoc :memory (input (first inputs) instr memory))
+                 (update :inputs rest)
+                 (update :pointer + (count instr)))
+
+          4  (-> state (update :outputs conj (output instr memory)) (update :pointer + (count instr)))
+
+          5  (assoc state :pointer (jump-if-true pointer instr memory))
+          6  (assoc state :pointer (jump-if-false pointer instr memory))
+
+          7  (-> state (assoc :memory (less-than instr memory)) (update :pointer + (count instr)))
+          8  (-> state (assoc :memory (equal-to instr memory)) (update :pointer + (count instr)))))))
 
 (defn process [state] (if (:halted state) state (recur (process-next state))))
 
@@ -90,8 +113,9 @@
     [3500 9 10 70 2 3 11 0 99 30 40 50] [1,9,10,3,2,3,11,0,99,30,40,50]))
 
 (deftest day5
-  (is (= '(123) (:outputs (run-program [3,0,4,0,99] [123]))))
   (is (= [1101 100 -1 4 99] (:memory (run-program [1101,100,-1,4,0]))))
+  (is (= '(123) (:outputs (run-program [3,0,4,0,99] [123]))))
+  (is (thrown? Exception (run-program [3,0,4,0,99] [])))
 
   (testing "opcodes"
     (is (= [2 '(:pos :pos :pos)] (opcode+modes 2)))
@@ -117,7 +141,50 @@
 
 
     (is (= 999 (first (:outputs (run-program [4 3 99 999])))))
-    (is (= 3 (first (:outputs (run-program [104 3 99 999])))))))
+    (is (= 3 (first (:outputs (run-program [104 3 99 999]))))))
+
+  (testing "Less than and equal to"
+    (are [program input output] (= output (first (:outputs (run-program program [input]))))
+      [3,9,8,9,10,9,4,9,99,-1,8] 7 0
+      [3,9,8,9,10,9,4,9,99,-1,8] 8 1
+      [3,9,8,9,10,9,4,9,99,-1,8] 9 0
+
+      [3,9,7,9,10,9,4,9,99,-1,8] 7 1
+      [3,9,7,9,10,9,4,9,99,-1,8] 8 0
+      [3,9,7,9,10,9,4,9,99,-1,8] 9 0
+
+      [3,3,1108,-1,8,3,4,3,99] 7 0
+      [3,3,1108,-1,8,3,4,3,99] 8 1
+      [3,3,1108,-1,8,3,4,3,99] 9 0
+
+      [3,3,1107,-1,8,3,4,3,99] 7 1
+      [3,3,1107,-1,8,3,4,3,99] 8 0
+      [3,3,1107,-1,8,3,4,3,99] 9 0))
+
+  (testing "jumping"
+    (are [program input output] (= output (first (:outputs (run-program program [input]))))
+      [3,12,6,12,15,1,13,14,13,4,13,99,-1,0,1,9] -7 1
+      [3,12,6,12,15,1,13,14,13,4,13,99,-1,0,1,9] 0 0
+      [3,12,6,12,15,1,13,14,13,4,13,99,-1,0,1,9] 7 1
+
+      [3,3,1105,-1,9,1101,0,0,12,4,12,99,1] -7 1
+      [3,3,1105,-1,9,1101,0,0,12,4,12,99,1] 0 0
+      [3,3,1105,-1,9,1101,0,0,12,4,12,99,1] 7 1
+
+      [3,21,1008,21,8,20,1005,20,22,107,8,21,20,1006,20,31
+       1106,0,36,98,0,0,1002,21,125,20,4,20,1105,1,46,104
+       999,1105,1,46,1101,1000,1,20,4,20,1105,1,46,98,99]
+      7 999
+
+      [3,21,1008,21,8,20,1005,20,22,107,8,21,20,1006,20,31
+       1106,0,36,98,0,0,1002,21,125,20,4,20,1105,1,46,104
+       999,1105,1,46,1101,1000,1,20,4,20,1105,1,46,98,99]
+      8 1000
+
+      [3,21,1008,21,8,20,1005,20,22,107,8,21,20,1006,20,31
+       1106,0,36,98,0,0,1002,21,125,20,4,20,1105,1,46,104
+       999,1105,1,46,1101,1000,1,20,4,20,1105,1,46,98,99]
+      9 1001)))
 
 ;; program and parsing code
 
@@ -153,4 +220,7 @@
 
   (:outputs (run-program program-day5 [1]))
   ;; => (15426686 0 0 0 0 0 0 0 0 0)
+
+  (:outputs (run-program program-day5 [5]))
+  ;; => (11430197)
   )
