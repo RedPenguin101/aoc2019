@@ -30,31 +30,36 @@
   "The return either the new memory state of the computer, the output (for output), 
    or the new pointer position (for jumps)")
 
+(defn grow-memory [pos memory]
+  (if (< (count memory) pos)
+    (vec (concat memory (repeat (- pos (count memory)) 0)))
+    memory))
+
 (defn value [mode param base memory]
   (case mode
     :imm param
-    :pos (memory param)
-    :rel (memory (+ base param))))
+    :pos (get memory param 0)
+    :rel (get memory (+ base param) 0)))
 
 (defn- add [[[_ [pa pb]] a b c] memory base]
   (let [va (value pa a base memory)
         vb (value pb b base memory)]
-    (assoc memory c (+ va vb))))
+    (assoc (grow-memory c memory) c (+ va vb))))
 
 (defn- mult [[[_ [pa pb]] a b c] memory base]
   (let [va (value pa a base memory)
         vb (value pb b base memory)]
-    (assoc memory c (* va vb))))
+    (assoc (grow-memory c memory) c (* va vb))))
 
 (defn- less-than [[[_op [pa pb]] a b c] memory base]
   (let [va (value pa a base memory)
         vb (value pb b base memory)]
-    (if (< va vb) (assoc memory c 1) (assoc memory c 0))))
+    (if (< va vb) (assoc (grow-memory c memory) c 1) (assoc (grow-memory c memory) c 0))))
 
 (defn- equal-to [[[_op [pa pb]] a b c] memory base]
   (let [va (value pa a base memory)
         vb (value pb b base memory)]
-    (if (= va vb) (assoc memory c 1) (assoc memory c 0))))
+    (if (= va vb) (assoc (grow-memory c memory) c 1) (assoc (grow-memory c memory) c 0))))
 
 (defn- input [input [_ a] memory]
   (if (nil? input)
@@ -73,6 +78,10 @@
         vb (value pb b base memory)]
     (if (zero? va) vb (+ pointer 3))))
 
+(defn- change-relative-base [[[_op [pa]] a] memory base]
+  (let [va (value pa a base memory)]
+    (+ base va)))
+
 (defn- opcode+modes
   "Returns a tuple of opcode and modes, like [5 [:imm :pos :pos]]
    valus in the modes are given in the same order as the parameters they relate to"
@@ -87,7 +96,7 @@
    the number of params are correct for the opcode"
   [{:keys [pointer memory]}]
   (let [[opcode modes] (opcode+modes (memory pointer))]
-    (assoc (subvec memory pointer (+ ({99 0, 1 4, 2 4, 3 2, 4 2, 5 3, 6 3, 7 4, 8 4}
+    (assoc (subvec memory pointer (+ ({99 0, 1 4, 2 4, 3 2, 4 2, 5 3, 6 3, 7 4, 8 4, 9 2}
                                       opcode) pointer))
            0
            [opcode modes])))
@@ -114,7 +123,9 @@
           6  (assoc state :pointer (jump-if-false pointer instr memory base))
 
           7  (-> state (assoc :memory (less-than instr memory base)) (update :pointer + (count instr)))
-          8  (-> state (assoc :memory (equal-to instr memory base)) (update :pointer + (count instr)))))))
+          8  (-> state (assoc :memory (equal-to instr memory base)) (update :pointer + (count instr)))
+
+          9  (-> state (assoc :base (change-relative-base instr memory base)) (update :pointer + (count instr)))))))
 
 (defn- process [state] (if (:halted state) state (recur (process-next state))))
 
@@ -264,6 +275,13 @@
        1106,0,36,98,0,0,1002,21,125,20,4,20,1105,1,46,104
        999,1105,1,46,1101,1000,1,20,4,20,1105,1,46,98,99]
       9 1001)))
+
+(deftest day9
+  (let [prog [109,1,204,-1,1001,100,1,100,1008,100,16,101,1006,101,0,99]]
+    (is (= prog (reverse (:outputs (run-program prog))))))
+  (is (= 16 (count (str (first (:outputs (run-program [1102,34915192,34915192,7,4,7,99,0])))))))
+  (is (= 1125899906842624 (first (:outputs (run-program [104,1125899906842624,99])))))
+  (is (= 444 (first (:outputs (process {:pointer 0 :memory [1101 123 321 1985 109 19 204 -34 99] :base 2000}))))))
 
 (deftest async-boot-tests
   (let [st (atom {})]
