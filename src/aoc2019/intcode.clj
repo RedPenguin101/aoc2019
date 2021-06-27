@@ -16,49 +16,58 @@
    After an instruction finishes, the instruction pointer increases by the number of values in the instruction
    ")
 
-(comment
-  "instr fns get input like"
-  '[[opcode [mode-a mode-b mode-c]] param-a param-b param-c]
-  "bit ugly, might tidy up later")
+;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; INSTRUCTION FUNCTIONS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn add [[[_op [pa pb _pc]] a b c] memory]
+(comment
+  " Instruction functions are passed Instructions. These are in the form"
+
+  '[[opcode [mode-a mode-b mode-c]] param-a param-b param-c]
+
+  "Instructions functions are also passed the memory of the computer, and the input value (for input) and current pointer value (for jumps)"
+
+  "The return either the new memory state of the computer, the output (for output), 
+   or the new pointer position (for jumps)")
+
+(defn- add [[[_ [pa pb]] a b c] memory]
   (let [va (if (= :imm pa) a (memory a))
         vb (if (= :imm pb) b (memory b))]
     (assoc memory c (+ va vb))))
 
-(defn mult [[[_op [pa pb _pc]] a b c] memory]
+(defn- mult [[[_ [pa pb]] a b c] memory]
   (let [va (if (= :imm pa) a (memory a))
         vb (if (= :imm pb) b (memory b))]
     (assoc memory c (* va vb))))
 
-(defn input [input [_ a] memory]
-  (if (nil? input)
-    (throw (ex-info "Input cannot be nil for input instruction" {:mem-dump memory}))
-    (assoc memory a input)))
-
-(defn output [[[_ [pa]] a] memory] (if (= :imm pa) a (memory a)))
-
-(defn jump-if-true [pointer [[_op [pa pb]] a b] memory]
-  (let [va (if (= :imm pa) a (memory a))
-        vb (if (= :imm pb) b (memory b))]
-    (if (zero? va) (+ pointer 3) vb)))
-
-(defn jump-if-false [pointer [[_op [pa pb]] a b] memory]
-  (let [va (if (= :imm pa) a (memory a))
-        vb (if (= :imm pb) b (memory b))]
-    (if (zero? va) vb (+ pointer 3))))
-
-(defn less-than [[[_op [pa pb]] a b c] memory]
+(defn- less-than [[[_op [pa pb]] a b c] memory]
   (let [va (if (= :imm pa) a (memory a))
         vb (if (= :imm pb) b (memory b))]
     (if (< va vb) (assoc memory c 1) (assoc memory c 0))))
 
-(defn equal-to [[[_op [pa pb]] a b c] memory]
+(defn- equal-to [[[_op [pa pb]] a b c] memory]
   (let [va (if (= :imm pa) a (memory a))
         vb (if (= :imm pb) b (memory b))]
     (if (= va vb) (assoc memory c 1) (assoc memory c 0))))
 
-(defn opcode+modes
+(defn- input [input [_ a] memory]
+  (if (nil? input)
+    (throw (ex-info "Input cannot be nil for input instruction" {:mem-dump memory}))
+    (assoc memory a input)))
+
+(defn- output [[[_ [pa]] a] memory] (if (= :imm pa) a (memory a)))
+
+(defn- jump-if-true [pointer [[_op [pa pb]] a b] memory]
+  (let [va (if (= :imm pa) a (memory a))
+        vb (if (= :imm pb) b (memory b))]
+    (if (zero? va) (+ pointer 3) vb)))
+
+(defn- jump-if-false [pointer [[_op [pa pb]] a b] memory]
+  (let [va (if (= :imm pa) a (memory a))
+        vb (if (= :imm pb) b (memory b))]
+    (if (zero? va) vb (+ pointer 3))))
+
+(defn- opcode+modes
   "Returns a tuple of opcode and modes, like [5 [:imm :pos :pos]]
    valus in the modes are given in the same order as the parameters they relate to"
   [long-opcode]
@@ -66,7 +75,7 @@
     [(- long-opcode (* param-vals 100))
      (reverse (map #({0 :pos 1 :imm} (Character/digit % 10)) (format "%03d" param-vals)))]))
 
-(defn instruction
+(defn- instruction
   "Given the pointer and memory state of an intcode computer, will return the current instruction
    The format is [opcode+modes param-a param-b param-c]
    the number of params are correct for the opcode"
@@ -77,7 +86,11 @@
            0
            [opcode modes])))
 
-(defn process-next [{:keys [pointer memory inputs] :as state}]
+;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; SYNCHRONOUS EXECUTION
+;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn- process-next [{:keys [pointer memory inputs] :as state}]
   (let [[opcode] (opcode+modes (memory pointer))
         instr (instruction state)]
     (-> (case opcode
@@ -97,13 +110,20 @@
           7  (-> state (assoc :memory (less-than instr memory)) (update :pointer + (count instr)))
           8  (-> state (assoc :memory (equal-to instr memory)) (update :pointer + (count instr)))))))
 
-(defn process [state] (if (:halted state) state (recur (process-next state))))
+(defn- process [state] (if (:halted state) state (recur (process-next state))))
 
 (defn run-program
   ([program] (process {:pointer 0 :memory program}))
   ([program inputs] (process {:pointer 0 :memory program :inputs inputs})))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; ASYNCHRONOUS EXECUTION
+;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defn boot
+  "Boot up an intcode computer. Provide the program, a channel to receive input, and an atom where the state of 
+   the computer can be viewed. Returns a channel where the computer will output. The computer will pause execution
+   until its output is taken."
   [program in state-atom]
   (let [out (a/chan)]
     (a/go-loop [{:keys [pointer memory] :as state} {:pointer 0 :memory program}]
@@ -130,45 +150,9 @@
               8  (recur (-> state (assoc :memory (equal-to instr memory)) (update :pointer + (count instr))))))))
     out))
 
-(comment
-  (run-program [1101 5 5 0 99])
-
-  (def st (atom {}))
-  (def in (a/chan))
-  (def out (boot [1101 5 5 0 99] in st))
-
-  @st
-  (a/>!! in 123)
-  (a/<!! out)
-
-  1)
-
-(comment
-  (run-program [4 0 99])
-
-  (def st (atom {}))
-  (def in (a/chan))
-  (def out (boot [4 0 99] in st))
-
-  @st
-  (a/<!! out)
-
-  1)
-
-(comment
-  (run-program [3 0 99] [123])
-
-  (def st (atom {}))
-  (def in (a/chan))
-  (def out (boot [3 0 99] in st))
-
-  @st
-  (a/>!! in 123)
-
-
-  1)
-
-;; tests
+;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; TESTS
+;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (deftest day2
   (are [halt-state program] (= halt-state (:memory (run-program program)))
@@ -252,7 +236,40 @@
        999,1105,1,46,1101,1000,1,20,4,20,1105,1,46,98,99]
       9 1001)))
 
-;; program and parsing code
+(defn- take-until-closed
+  "Given a channel, takes messages from that channel until it is closed
+  then returns a sequence of all messages it receives"
+  ([channel] (take-until-closed [] channel))
+  ([result-seq channel]
+   (let [message (a/<!! channel)]
+     (if message
+       (recur (conj result-seq message) channel)
+       result-seq))))
+
+(deftest async-boot-tests
+  (let [st (atom {})]
+    (take-until-closed (boot [1101 5 5 0 99] (a/chan) st))
+    (is (:halted @st)))
+
+  (is (= 4 (first (take-until-closed (boot [4 0 99] (a/chan) (atom {}))))))
+
+  (let [st (atom {})
+        in (a/chan)
+        out (boot [3 0 99] in st)]
+    (a/>!! in 5)
+    (take-until-closed out)
+    (is (:halted @st)))
+
+  (let [st (atom {})
+        in (a/chan)
+        out (boot [3,0,4,0,99] in st)]
+    (a/>!! in 123)
+    (is (= 123 (first (take-until-closed out))))
+    (is (:halted @st))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Parsing and program code
+;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn parse-program [string] (mapv #(Long/parseLong %) (str/split (str/trim-newline string) #",")))
 
@@ -291,17 +308,9 @@
   ;; => (11430197)
   )
 
-(defn- take-until-closed
-  "Given a channel, takes messages from that channel until it is closed
-  then returns a sequence of all messages it receives"
-  ([channel] (take-until-closed [] channel))
-  ([result-seq channel]
-   (let [message (a/<!! channel)]
-     (if message
-       (recur (conj result-seq message) channel)
-       result-seq))))
-
 (comment
+  "Async version of day 5"
+
   (def program-day5 (parse-program (slurp "resources/day5input")))
   (def st (atom {}))
 
