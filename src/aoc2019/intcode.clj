@@ -41,30 +41,35 @@
     :pos (get memory param 0)
     :rel (get memory (+ base param) 0)))
 
-(defn- add [[[_ [pa pb]] a b c] memory base]
+(defn- add [[[_ [pa pb pc]] a b c] memory base]
   (let [va (value pa a base memory)
-        vb (value pb b base memory)]
-    (assoc (grow-memory c memory) c (+ va vb))))
+        vb (value pb b base memory)
+        pos (if (= :rel pc) (+ base c) c)]
+    (assoc (grow-memory pos memory) pos (+ va vb))))
 
-(defn- mult [[[_ [pa pb]] a b c] memory base]
+(defn- mult [[[_ [pa pb pc]] a b c] memory base]
   (let [va (value pa a base memory)
-        vb (value pb b base memory)]
-    (assoc (grow-memory c memory) c (* va vb))))
+        vb (value pb b base memory)
+        pos (if (= :rel pc) (+ base c) c)]
+    (assoc (grow-memory pos memory) pos (* va vb))))
 
-(defn- less-than [[[_op [pa pb]] a b c] memory base]
+(defn- less-than [[[_op [pa pb pc]] a b c] memory base]
   (let [va (value pa a base memory)
-        vb (value pb b base memory)]
-    (if (< va vb) (assoc (grow-memory c memory) c 1) (assoc (grow-memory c memory) c 0))))
+        vb (value pb b base memory)
+        pos (if (= :rel pc) (+ base c) c)]
+    (if (< va vb) (assoc (grow-memory pos memory) pos 1) (assoc (grow-memory pos memory) pos 0))))
 
-(defn- equal-to [[[_op [pa pb]] a b c] memory base]
+(defn- equal-to [[[_op [pa pb pc]] a b c] memory base]
   (let [va (value pa a base memory)
-        vb (value pb b base memory)]
-    (if (= va vb) (assoc (grow-memory c memory) c 1) (assoc (grow-memory c memory) c 0))))
+        vb (value pb b base memory)
+        pos (if (= :rel pc) (+ base c) c)]
+    (if (= va vb) (assoc (grow-memory pos memory) pos 1) (assoc (grow-memory pos memory) pos 0))))
 
-(defn- input [input [_ a] memory]
-  (if (nil? input)
-    (throw (ex-info "Input cannot be nil for input instruction" {:mem-dump memory}))
-    (assoc memory a input)))
+(defn- input [in [[_op [pa]] a] memory base]
+  (let [va (if (= :rel pa) (+ base a) a)]
+    (if (nil? in)
+      (throw (ex-info "Input cannot be nil for input instruction" {:mem-dump memory}))
+      (assoc (grow-memory va memory) va in))))
 
 (defn- output [[[_ [pa]] a] memory base] (value pa a base memory))
 
@@ -113,7 +118,7 @@
           1  (-> state (assoc :memory (add  instr memory base)) (update :pointer + (count instr)))
           2  (-> state (assoc :memory (mult instr memory base)) (update :pointer + (count instr)))
 
-          3  (-> state (assoc :memory (input (first inputs) instr memory))
+          3  (-> state (assoc :memory (input (first inputs) instr memory base))
                  (update :inputs rest)
                  (update :pointer + (count instr)))
 
@@ -164,7 +169,7 @@
                2  (recur (-> state (assoc :memory (mult instr memory base)) (update :pointer + (count instr))))
 
                3  (recur (-> state
-                             (assoc :memory (input (a/<! in) instr memory))
+                             (assoc :memory (input (a/<! in) instr memory base))
                              (update :pointer + (count instr))))
 
                4  (let [output (output instr memory base)]
@@ -362,4 +367,17 @@
     (a/>!! in 5)
     (take-until-closed out))
   ;; => [11430197]
+  )
+
+(comment
+  "day9"
+
+  (def program (parse-program (slurp "resources/day9input")))
+
+  (:outputs (run-program program [1]))
+  ;; => (2671328082)
+
+  (time (:outputs (run-program program [2])))
+  ;; 8 seconds
+  ;; => (59095)
   )
