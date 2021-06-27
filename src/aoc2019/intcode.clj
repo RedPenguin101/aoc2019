@@ -13,35 +13,45 @@
    The values used immediately after an opcode, if any, are called the instruction's parameters
    The address of the current instruction is called the instruction pointer
    After an instruction finishes, the instruction pointer increases by the number of values in the instruction
-   "
+   ")
 
-  "Day2:1202 Program Alarm
- An Intcode program is a list of integers separated by commas
- opcode - either 1, 2, or 99
- Opcode 1 adds together numbers read from two positions and stores the result in a third position
- Opcode 2 works exactly like opcode 1, except it multiplies
+"Day 5: Thermal Environment Supervision Terminal
  
- ")
+ two new instructions
+ Opcode 3 takes a single integer as input and saves it to the position given by its only parameter.
+ Opcode 4 outputs the value of its only parameter."
 
 (defn add  [[_op a b c] memory] (assoc memory c (+ (memory a) (memory b))))
 (defn mult [[_op a b c] memory] (assoc memory c (* (memory a) (memory b))))
+(defn input [input [_op a] memory] (assoc memory a input))
+(defn output [[_op a] memory] (memory a))
 
-(defn instruction [{:keys [pointer memory]}] (subvec memory pointer (+ 4 pointer)))
+(defn instruction [{:keys [pointer memory]}]
+  #_(println [pointer memory])
+  (subvec memory pointer (+ ({99 0, 1 4, 2 4, 3 2, 4 2} (memory pointer)) pointer)))
 
-(defn process-next [{:keys [pointer memory] :as state}]
-  (case (memory pointer)
-    99 (assoc state :halted true)
-    1  (-> state (assoc :memory (add  (instruction state) memory)) (update :pointer + 4))
-    2  (-> state (assoc :memory (mult (instruction state) memory)) (update :pointer + 4))))
+(defn process-next [{:keys [pointer memory inputs] :as state}]
+  (let [opcode (memory pointer) instr (instruction state)]
+    (-> (case opcode
+          99 (assoc state :halted true)
+          1  (assoc state :memory (add  instr memory))
+          2  (assoc state :memory (mult instr memory))
+          3  (-> state (assoc :memory (input (first inputs) instr memory)) (update :inputs rest))
+          4  (update state :outputs conj (output instr memory)))
+        (update :pointer + (count instr)))))
 
 (defn process [state] (if (:halted state) state (recur (process-next state))))
 
 (comment
-  (process-next {:pointer 0 :memory [1 0 0 0 99]})
-  (process-next {:pointer 4 :memory [2 0 0 0 99]})
-  (process {:pointer 0 :memory [1 0 0 0 99]}))
+  (-> {:pointer 0 :memory [3,0,4,0,99] :inputs '(5)}
+      process-next
+      process-next)
+  (process {:pointer 0 :memory [3,0,4,0,99] :inputs '(5)})
+  1)
 
-(defn run-program [program] (process {:pointer 0 :memory program}))
+(defn run-program
+  ([program] (process {:pointer 0 :memory program}))
+  ([program inputs] (process {:pointer 0 :memory program :inputs inputs})))
 
 ;; tests
 
@@ -52,6 +62,9 @@
     [2 4 4 5 99 9801] [2,4,4,5,99,0]
     [30 1 1 4 2 5 6 0 99] [1,1,1,4,99,5,6,0,99]
     [3500 9 10 70 2 3 11 0 99 30 40 50] [1,9,10,3,2,3,11,0,99,30,40,50]))
+
+(deftest day5
+  (is (= '(123) (:outputs (run-program [3,0,4,0,99] [123])))))
 
 ;; program and parsing code
 
