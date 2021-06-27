@@ -1,6 +1,7 @@
 (ns aoc2019.intcode
   (:require [clojure.test :refer [deftest is are testing]]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [clojure.core.async :as a]))
 
 (comment
   "Intcode program terminology
@@ -101,6 +102,71 @@
 (defn run-program
   ([program] (process {:pointer 0 :memory program}))
   ([program inputs] (process {:pointer 0 :memory program :inputs inputs})))
+
+(defn boot
+  [program in state-atom]
+  (let [out (a/chan)]
+    (a/go-loop [{:keys [pointer memory] :as state} {:pointer 0 :memory program}]
+      (reset! state-atom state)
+      (let [[opcode] (opcode+modes (memory pointer))
+            instr (instruction state)]
+        (-> (case opcode
+              99 (do (a/close! in) (a/close! out) (reset! state-atom (-> state (assoc :halted true))))
+              1  (recur (-> state (assoc :memory (add  instr memory)) (update :pointer + (count instr))))
+              2  (recur (-> state (assoc :memory (mult instr memory)) (update :pointer + (count instr))))
+
+              3  (recur (-> state
+                            (assoc :memory (input (a/<! in) instr memory))
+                            (update :pointer + (count instr))))
+
+              4  (let [output (output instr memory)]
+                   (a/>! out output)
+                   (recur (-> state (update :outputs conj output) (update :pointer + (count instr)))))
+
+              5  (recur (assoc state :pointer (jump-if-true pointer instr memory)))
+              6  (recur (assoc state :pointer (jump-if-false pointer instr memory)))
+
+              7  (recur (-> state (assoc :memory (less-than instr memory)) (update :pointer + (count instr))))
+              8  (recur (-> state (assoc :memory (equal-to instr memory)) (update :pointer + (count instr))))))))
+    out))
+
+(comment
+  (run-program [1101 5 5 0 99])
+
+  (def st (atom {}))
+  (def in (a/chan))
+  (def out (boot [1101 5 5 0 99] in st))
+
+  @st
+  (a/>!! in 123)
+  (a/<!! out)
+
+  1)
+
+(comment
+  (run-program [4 0 99])
+
+  (def st (atom {}))
+  (def in (a/chan))
+  (def out (boot [4 0 99] in st))
+
+  @st
+  (a/<!! out)
+
+  1)
+
+(comment
+  (run-program [3 0 99] [123])
+
+  (def st (atom {}))
+  (def in (a/chan))
+  (def out (boot [3 0 99] in st))
+
+  @st
+  (a/>!! in 123)
+
+
+  1)
 
 ;; tests
 
@@ -223,4 +289,31 @@
 
   (:outputs (run-program program-day5 [5]))
   ;; => (11430197)
+  )
+
+(defn- take-until-closed
+  "Given a channel, takes messages from that channel until it is closed
+  then returns a sequence of all messages it receives"
+  ([channel] (take-until-closed [] channel))
+  ([result-seq channel]
+   (let [message (a/<!! channel)]
+     (if message
+       (recur (conj result-seq message) channel)
+       result-seq))))
+
+(comment
+  (def program-day5 (parse-program (slurp "resources/day5input")))
+  (def st (atom {}))
+
+  (let [in (a/chan)
+        out (boot program-day5 in st)]
+    (a/>!! in 1)
+    (take-until-closed out))
+  ;; => [0 0 0 0 0 0 0 0 0 15426686]
+
+  (let [in (a/chan)
+        out (boot program-day5 in st)]
+    (a/>!! in 5)
+    (take-until-closed out))
+  ;; => [11430197]
   )
