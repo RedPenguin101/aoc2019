@@ -1,5 +1,5 @@
 (ns aoc2019.intcode
-  (:require [clojure.test :refer [deftest is are]]
+  (:require [clojure.test :refer [deftest is are testing]]
             [clojure.string :as str]))
 
 (comment
@@ -19,19 +19,52 @@
  
  two new instructions
  Opcode 3 takes a single integer as input and saves it to the position given by its only parameter.
- Opcode 4 outputs the value of its only parameter."
+ Opcode 4 outputs the value of its only parameter.
+ 
+ Parameter modes are stored in the same value as the instruction's opcode. 
+ The opcode is a two-digit number based only on the ones and tens digit of the value
+ Parameter modes are single digits, one per parameter, read right-to-left from the opcode:
+ Any missing modes are 0"
 
-(defn add  [[_op a b c] memory] (assoc memory c (+ (memory a) (memory b))))
-(defn mult [[_op a b c] memory] (assoc memory c (* (memory a) (memory b))))
-(defn input [input [_op a] memory] (assoc memory a input))
-(defn output [[_op a] memory] (memory a))
+(comment
+  "instr fns get input like"
+  '[[opcode [mode-a mode-b mode-c]] param-a param-b param-c]
+  "bit ugly, might tidy up later")
 
-(defn instruction [{:keys [pointer memory]}]
-  #_(println [pointer memory])
-  (subvec memory pointer (+ ({99 0, 1 4, 2 4, 3 2, 4 2} (memory pointer)) pointer)))
+(defn add [[[_op [pa pb _pc]] a b c] memory]
+  (let [va (if (= :imm pa) a (memory a))
+        vb (if (= :imm pb) b (memory b))]
+    (assoc memory c (+ va vb))))
+
+(defn mult [[[_op [pa pb _pc]] a b c] memory]
+  (let [va (if (= :imm pa) a (memory a))
+        vb (if (= :imm pb) b (memory b))]
+    (assoc memory c (* va vb))))
+
+(defn input [input [_ a] memory] (assoc memory a input))
+(defn output [[[_ [pa]] a] memory] (if (= :imm pa) a (memory a)))
+
+(defn opcode+modes
+  "Returns a tuple of opcode and modes, like [5 [:imm :pos :pos]]
+   valus in the modes are given in the same order as the parameters they relate to"
+  [long-opcode]
+  (let [param-vals (quot long-opcode 100)]
+    [(- long-opcode (* param-vals 100))
+     (reverse (map #({0 :pos 1 :imm} (Character/digit % 10)) (format "%03d" param-vals)))]))
+
+(defn instruction
+  "Given the pointer and memory state of an intcode computer, will return the current instruction
+   The format is [opcode+modes param-a param-b param-c]
+   the number of params are correct for the opcode"
+  [{:keys [pointer memory]}]
+  (let [[opcode modes] (opcode+modes (memory pointer))]
+    (assoc (subvec memory pointer (+ ({99 0, 1 4, 2 4, 3 2, 4 2} opcode) pointer))
+           0
+           [opcode modes])))
 
 (defn process-next [{:keys [pointer memory inputs] :as state}]
-  (let [opcode (memory pointer) instr (instruction state)]
+  (let [[opcode] (opcode+modes (memory pointer))
+        instr (instruction state)]
     (-> (case opcode
           99 (assoc state :halted true)
           1  (assoc state :memory (add  instr memory))
@@ -41,13 +74,6 @@
         (update :pointer + (count instr)))))
 
 (defn process [state] (if (:halted state) state (recur (process-next state))))
-
-(comment
-  (-> {:pointer 0 :memory [3,0,4,0,99] :inputs '(5)}
-      process-next
-      process-next)
-  (process {:pointer 0 :memory [3,0,4,0,99] :inputs '(5)})
-  1)
 
 (defn run-program
   ([program] (process {:pointer 0 :memory program}))
@@ -64,7 +90,34 @@
     [3500 9 10 70 2 3 11 0 99 30 40 50] [1,9,10,3,2,3,11,0,99,30,40,50]))
 
 (deftest day5
-  (is (= '(123) (:outputs (run-program [3,0,4,0,99] [123])))))
+  (is (= '(123) (:outputs (run-program [3,0,4,0,99] [123]))))
+  (is (= [1101 100 -1 4 99] (:memory (run-program [1101,100,-1,4,0]))))
+
+  (testing "opcodes"
+    (is (= [2 '(:pos :pos :pos)] (opcode+modes 2)))
+    (is (= [2 '(:imm :pos :pos)] (opcode+modes 102)))
+    (is (= [2 '(:pos :imm :pos)] (opcode+modes 1002)))
+    (is (= [2 '(:pos :pos :imm)] (opcode+modes 10002)))
+    (is (= [2 '(:imm :imm :pos)] (opcode+modes 1102)))
+    (is (= [2 '(:imm :pos :imm)] (opcode+modes 10102)))
+    (is (= [2 '(:imm :imm :imm)] (opcode+modes 11102))))
+
+  (testing "Immediate and position modes"
+    (is (= [1002 4 3 4 99] (:memory (run-program [1002,4,3,4,33]))))
+
+    (is (= 2  (first (:memory (run-program [1 5 6 0 99 1 1]))))) ;; pos pos, 1+1
+    (is (= 6  (first (:memory (run-program [101 5 6 0 99 1 1])))))  ;; imm pos, 5+1
+    (is (= 7  (first (:memory (run-program [1001 5 6 0 99 1 1])))))  ;; pos imm, 1+6
+    (is (= 11 (first (:memory (run-program [1101 5 6 0 99 1 1])))))  ;; imm imm, 5+6
+
+    (is (= 4  (first (:memory (run-program [2 5 6 0 99 2 2]))))) ;; pos pos, 2*2
+    (is (= 10 (first (:memory (run-program [102 5 6 0 99 2 2])))))  ;; imm pos, 5*2
+    (is (= 12 (first (:memory (run-program [1002 5 6 0 99 2 2])))))  ;; pos imm, 2*6
+    (is (= 30 (first (:memory (run-program [1102 5 6 0 99 2 2])))))  ;; imm imm, 5*6
+
+
+    (is (= 999 (first (:outputs (run-program [4 3 99 999])))))
+    (is (= 3 (first (:outputs (run-program [104 3 99 999])))))))
 
 ;; program and parsing code
 
@@ -91,4 +144,13 @@
                                        first))
                    (+ (* 100 a) b))))
   ;; => (8250)
+
+  "Day 5
+   Part1: After providing 1 to the only input instruction and passing all the tests, 
+   what diagnostic code does the program produce?"
+
+  (def program-day5 (parse-program (slurp "resources/day5input")))
+
+  (:outputs (run-program program-day5 [1]))
+  ;; => (15426686 0 0 0 0 0 0 0 0 0)
   )
