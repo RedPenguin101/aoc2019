@@ -30,24 +30,30 @@
   "The return either the new memory state of the computer, the output (for output), 
    or the new pointer position (for jumps)")
 
-(defn- add [[[_ [pa pb]] a b c] memory]
-  (let [va (if (= :imm pa) a (memory a))
-        vb (if (= :imm pb) b (memory b))]
+(defn value [mode param base memory]
+  (case mode
+    :imm param
+    :pos (memory param)
+    :rel (memory (+ base param))))
+
+(defn- add [[[_ [pa pb]] a b c] memory base]
+  (let [va (value pa a base memory)
+        vb (value pb b base memory)]
     (assoc memory c (+ va vb))))
 
-(defn- mult [[[_ [pa pb]] a b c] memory]
-  (let [va (if (= :imm pa) a (memory a))
-        vb (if (= :imm pb) b (memory b))]
+(defn- mult [[[_ [pa pb]] a b c] memory base]
+  (let [va (value pa a base memory)
+        vb (value pb b base memory)]
     (assoc memory c (* va vb))))
 
-(defn- less-than [[[_op [pa pb]] a b c] memory]
-  (let [va (if (= :imm pa) a (memory a))
-        vb (if (= :imm pb) b (memory b))]
+(defn- less-than [[[_op [pa pb]] a b c] memory base]
+  (let [va (value pa a base memory)
+        vb (value pb b base memory)]
     (if (< va vb) (assoc memory c 1) (assoc memory c 0))))
 
-(defn- equal-to [[[_op [pa pb]] a b c] memory]
-  (let [va (if (= :imm pa) a (memory a))
-        vb (if (= :imm pb) b (memory b))]
+(defn- equal-to [[[_op [pa pb]] a b c] memory base]
+  (let [va (value pa a base memory)
+        vb (value pb b base memory)]
     (if (= va vb) (assoc memory c 1) (assoc memory c 0))))
 
 (defn- input [input [_ a] memory]
@@ -55,16 +61,16 @@
     (throw (ex-info "Input cannot be nil for input instruction" {:mem-dump memory}))
     (assoc memory a input)))
 
-(defn- output [[[_ [pa]] a] memory] (if (= :imm pa) a (memory a)))
+(defn- output [[[_ [pa]] a] memory base] (value pa a base memory))
 
-(defn- jump-if-true [pointer [[_op [pa pb]] a b] memory]
-  (let [va (if (= :imm pa) a (memory a))
-        vb (if (= :imm pb) b (memory b))]
+(defn- jump-if-true [pointer [[_op [pa pb]] a b] memory base]
+  (let [va (value pa a base memory)
+        vb (value pb b base memory)]
     (if (zero? va) (+ pointer 3) vb)))
 
-(defn- jump-if-false [pointer [[_op [pa pb]] a b] memory]
-  (let [va (if (= :imm pa) a (memory a))
-        vb (if (= :imm pb) b (memory b))]
+(defn- jump-if-false [pointer [[_op [pa pb]] a b] memory base]
+  (let [va (value pa a base memory)
+        vb (value pb b base memory)]
     (if (zero? va) vb (+ pointer 3))))
 
 (defn- opcode+modes
@@ -73,7 +79,7 @@
   [long-opcode]
   (let [param-vals (quot long-opcode 100)]
     [(- long-opcode (* param-vals 100))
-     (reverse (map #({0 :pos 1 :imm} (Character/digit % 10)) (format "%03d" param-vals)))]))
+     (reverse (map #({0 :pos 1 :imm 2 :rel} (Character/digit % 10)) (format "%03d" param-vals)))]))
 
 (defn- instruction
   "Given the pointer and memory state of an intcode computer, will return the current instruction
@@ -90,31 +96,31 @@
 ;; SYNCHRONOUS EXECUTION
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn- process-next [{:keys [pointer memory inputs] :as state}]
+(defn- process-next [{:keys [pointer memory inputs base] :as state}]
   (let [[opcode] (opcode+modes (memory pointer))
         instr (instruction state)]
     (-> (case opcode
           99 (-> state (assoc :halted true))
-          1  (-> state (assoc :memory (add  instr memory)) (update :pointer + (count instr)))
-          2  (-> state (assoc :memory (mult instr memory)) (update :pointer + (count instr)))
+          1  (-> state (assoc :memory (add  instr memory base)) (update :pointer + (count instr)))
+          2  (-> state (assoc :memory (mult instr memory base)) (update :pointer + (count instr)))
 
           3  (-> state (assoc :memory (input (first inputs) instr memory))
                  (update :inputs rest)
                  (update :pointer + (count instr)))
 
-          4  (-> state (update :outputs conj (output instr memory)) (update :pointer + (count instr)))
+          4  (-> state (update :outputs conj (output instr memory base)) (update :pointer + (count instr)))
 
-          5  (assoc state :pointer (jump-if-true pointer instr memory))
-          6  (assoc state :pointer (jump-if-false pointer instr memory))
+          5  (assoc state :pointer (jump-if-true pointer instr memory base))
+          6  (assoc state :pointer (jump-if-false pointer instr memory base))
 
-          7  (-> state (assoc :memory (less-than instr memory)) (update :pointer + (count instr)))
-          8  (-> state (assoc :memory (equal-to instr memory)) (update :pointer + (count instr)))))))
+          7  (-> state (assoc :memory (less-than instr memory base)) (update :pointer + (count instr)))
+          8  (-> state (assoc :memory (equal-to instr memory base)) (update :pointer + (count instr)))))))
 
 (defn- process [state] (if (:halted state) state (recur (process-next state))))
 
 (defn run-program
-  ([program] (process {:pointer 0 :memory program}))
-  ([program inputs] (process {:pointer 0 :memory program :inputs inputs})))
+  ([program] (process {:pointer 0 :memory program :base 0}))
+  ([program inputs] (process {:pointer 0 :memory program :inputs inputs :base 0})))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; ASYNCHRONOUS EXECUTION
@@ -137,28 +143,28 @@
   ([program in state-atom] (boot program in state-atom nil))
   ([program in state-atom final]
    (let [out (a/chan)]
-     (a/go-loop [{:keys [pointer memory] :as state} {:pointer 0 :memory program}]
+     (a/go-loop [{:keys [pointer memory base] :as state} {:pointer 0 :memory program :base 0}]
        (reset! state-atom state)
        (let [[opcode] (opcode+modes (memory pointer))
              instr (instruction state)]
          (-> (case opcode
                99 (do (when final (a/>! final (first (:outputs state)))) (a/close! in) (a/close! out) (reset! state-atom (-> state (assoc :halted true))))
-               1  (recur (-> state (assoc :memory (add  instr memory)) (update :pointer + (count instr))))
-               2  (recur (-> state (assoc :memory (mult instr memory)) (update :pointer + (count instr))))
+               1  (recur (-> state (assoc :memory (add  instr memory base)) (update :pointer + (count instr))))
+               2  (recur (-> state (assoc :memory (mult instr memory base)) (update :pointer + (count instr))))
 
                3  (recur (-> state
                              (assoc :memory (input (a/<! in) instr memory))
                              (update :pointer + (count instr))))
 
-               4  (let [output (output instr memory)]
+               4  (let [output (output instr memory base)]
                     (a/>! out output)
                     (recur (-> state (update :outputs conj output) (update :pointer + (count instr)))))
 
-               5  (recur (assoc state :pointer (jump-if-true pointer instr memory)))
-               6  (recur (assoc state :pointer (jump-if-false pointer instr memory)))
+               5  (recur (assoc state :pointer (jump-if-true pointer instr memory base)))
+               6  (recur (assoc state :pointer (jump-if-false pointer instr memory base)))
 
-               7  (recur (-> state (assoc :memory (less-than instr memory)) (update :pointer + (count instr))))
-               8  (recur (-> state (assoc :memory (equal-to instr memory)) (update :pointer + (count instr))))))))
+               7  (recur (-> state (assoc :memory (less-than instr memory base)) (update :pointer + (count instr))))
+               8  (recur (-> state (assoc :memory (equal-to instr memory base)) (update :pointer + (count instr))))))))
      out)))
 
 (defn boot-with-input
