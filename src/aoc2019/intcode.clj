@@ -164,7 +164,9 @@
        (let [[opcode] (opcode+modes (memory pointer))
              instr (instruction state)]
          (-> (case opcode
-               99 (do (when final (a/>! final (first (:outputs state)))) (a/close! in) (a/close! out) (reset! state-atom (-> state (assoc :halted true))))
+               99 (do (when final (a/>! final (first (:outputs state))))
+                      (a/close! out)
+                      (reset! state-atom (-> state (assoc :halted true))))
                1  (recur (-> state (assoc :memory (add  instr memory base)) (update :pointer + (count instr))))
                2  (recur (-> state (assoc :memory (mult instr memory base)) (update :pointer + (count instr))))
 
@@ -180,7 +182,8 @@
                6  (recur (assoc state :pointer (jump-if-false pointer instr memory base)))
 
                7  (recur (-> state (assoc :memory (less-than instr memory base)) (update :pointer + (count instr))))
-               8  (recur (-> state (assoc :memory (equal-to instr memory base)) (update :pointer + (count instr))))))))
+               8  (recur (-> state (assoc :memory (equal-to instr memory base)) (update :pointer + (count instr))))
+               9  (recur (-> state (assoc :base (change-relative-base instr memory base)) (update :pointer + (count instr))))))))
      out)))
 
 (defn boot-with-input
