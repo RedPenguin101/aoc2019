@@ -198,43 +198,44 @@
 (comment
   (take-until-closed (boot-with-input [3,0,4,0,99] (a/chan) (atom {}) 123)))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; stop on input
-;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; STOP-ON-INPUT EXECUTION
+;; Returns the computer state when input collection is empty
+;; computer can be 'resumed' when provided with input 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn resume [{:keys [pointer memory inputs base] :as state}]
-  (let [[opcode] (opcode+modes (memory pointer))
-        instr (instruction state)]
-    (-> (case opcode
-          99 (-> state (assoc :halted true))
-          1  (recur (-> state (assoc :memory (add  instr memory base)) (update :pointer + (count instr))))
-          2  (recur (-> state (assoc :memory (mult instr memory base)) (update :pointer + (count instr))))
+(defn resume
+  ([computer input] (resume (assoc computer :inputs [input] :outputs [])))
+  ([{:keys [pointer memory inputs base] :as state}]
+   (let [[opcode] (opcode+modes (memory pointer))
+         instr (instruction state)]
+     (-> (case opcode
+           99 (-> state (assoc :halted true))
+           1  (recur (-> state (assoc :memory (add  instr memory base)) (update :pointer + (count instr))))
+           2  (recur (-> state (assoc :memory (mult instr memory base)) (update :pointer + (count instr))))
 
-          3  (if (empty? inputs)
-               state
-               (recur (-> state (assoc :memory (input (first inputs) instr memory base))
-                          (update :inputs rest)
-                          (update :pointer + (count instr)))))
+           3  (if (empty? inputs)
+                state
+                (recur (-> state (assoc :memory (input (first inputs) instr memory base))
+                           (update :inputs rest)
+                           (update :pointer + (count instr)))))
 
-          4  (recur (-> state (update :outputs conj (output instr memory base)) (update :pointer + (count instr))))
+           4  (recur (-> state (update :outputs conj (output instr memory base)) (update :pointer + (count instr))))
 
-          5  (recur (assoc state :pointer (jump-if-true pointer instr memory base)))
-          6  (recur (assoc state :pointer (jump-if-false pointer instr memory base)))
+           5  (recur (assoc state :pointer (jump-if-true pointer instr memory base)))
+           6  (recur (assoc state :pointer (jump-if-false pointer instr memory base)))
 
-          7  (recur (-> state (assoc :memory (less-than instr memory base)) (update :pointer + (count instr))))
-          8  (recur (-> state (assoc :memory (equal-to instr memory base)) (update :pointer + (count instr))))
+           7  (recur (-> state (assoc :memory (less-than instr memory base)) (update :pointer + (count instr))))
+           8  (recur (-> state (assoc :memory (equal-to instr memory base)) (update :pointer + (count instr))))
 
-          9  (recur (-> state (assoc :base (change-relative-base instr memory base)) (update :pointer + (count instr))))))))
+           9  (recur (-> state (assoc :base (change-relative-base instr memory base)) (update :pointer + (count instr)))))))))
 
 (defn run-program2
   ([program] (resume {:pointer 0 :memory program :base 0 :outputs [] :inputs []}))
   ([program inputs] (resume {:pointer 0 :memory program :inputs inputs :base 0 :outputs []})))
 
-(defn boot2
-  [program] {:pointer 0 :memory program :base 0 :outputs [] :inputs []})
-
-(defn resume2 [computer input]
-  (resume (assoc computer :inputs [input] :outputs [])))
+(defn boot2 [program]
+  {:pointer 0 :memory program :base 0 :outputs [] :inputs []})
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; TESTS

@@ -1,6 +1,6 @@
 (ns aoc2019.oxygen
   (:require [clojure.test :refer [deftest is]]
-            [aoc2019.intcode :refer [parse-program boot2 resume2]]
+            [aoc2019.intcode :refer [parse-program boot2 resume]]
             [clojure.set :refer [intersection union difference]]))
 
 "program loop
@@ -28,7 +28,7 @@
     4 [(inc x) y]))
 
 (defn move-robot [robot dir]
-  (let [new-comp (resume2 (:computer robot) dir)
+  (let [new-comp (resume (:computer robot) dir)
         status (first (:outputs new-comp))]
     (case status
       0 (-> robot (assoc :computer new-comp) (assoc :last-action :hit-wall))
