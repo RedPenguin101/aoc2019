@@ -18,6 +18,8 @@
 
 (def program (parse-program (slurp "resources/day15input")))
 
+(def start-robot {:position [0 0] :computer (boot2 program)})
+
 (defn move [[x y] command]
   (case command
     1 [x (inc y)]
@@ -25,51 +27,37 @@
     3 [(dec x) y]
     4 [(inc x) y]))
 
-(defn possible-moves [robot]
-  (if (= :found-oxy robot) [1 2 3 4]
-      (keep #(when (not ((second robot) (move (first robot) %))) %) [1 2 3 4])))
-
-(comment
-  (possible-moves [[0 0] #{}])
-  (possible-moves [[0 0] #{[1 1]}])
-  (possible-moves [[0 0] #{[0 1]}]))
-
-(defn run [computer robot input]
-  (let [new-comp (resume2 computer input)
+(defn move-robot [robot dir]
+  (let [new-comp (resume2 (:computer robot) dir)
         status (first (:outputs new-comp))]
-    (when (= status 2) (println "found!" (move (first robot) input)))
-    (cond (= status 2) [new-comp :found-oxy]
-          (= status 0) [new-comp [(first robot) (conj (second robot) (move (first robot) input))]]
-          :else [new-comp [(move (first robot) input) (second robot)]])))
+    (case status
+      0 (-> robot (assoc :computer new-comp) (assoc :last-action :hit-wall))
+      1 (-> robot (update :position move dir) (assoc :computer new-comp) (assoc :last-action :moved))
+      2 (-> robot (update :position move dir) (assoc :computer new-comp) (assoc :last-action :found-oxy)))))
 
-(defn new-paths [path computer robot moves]
-  (for [move moves]
-    (into [(vec (conj path move))]
-          (run computer robot move))))
+(defn new-paths [path robot moves]
+  (for [move moves
+        :let [new-robot (move-robot robot move)]
+        :when (not= :hit-wall (:last-action new-robot))]
+    [(conj path move) new-robot]))
 
-(defn search [paths it visited]
-  (let [[path computer robot] (first paths)
-        moves (possible-moves robot)]
-    (cond (> it 100000) [:break path]
-          (= :found-oxy robot) path
-          (visited (first robot)) (recur (rest paths) (inc it) visited)
-          :else (recur (concat (rest paths)
-                               (new-paths path computer robot moves))
-                       (inc it)
-                       (conj visited (first robot))))))
+(defn search [paths visited]
+  (let [[path robot] (first paths)]
+    (cond (= :found-oxy (:last-action robot)) [path (:position robot)]
+          (visited (:position robot)) (recur (rest paths) visited)
+          :else (recur (concat (rest paths) (new-paths path robot [1 2 3 4]))
+                       (conj visited (:position robot))))))
 
 (comment
-  (new-paths [1 2 3] (boot2 program) [[0 0] #{}] [1 2 3 4])
-
-  (time (count (search [[[] (boot2 program) [[0 0] #{}]]] 0 #{})))
+  (time (count (first (search [[[] start-robot]] #{}))))
   ;; => 248
-
-  ;; oxy is at [-20 12]
+  (second (search [[[] start-robot]] #{}))
+  ;; => [-20 12]
+  ;; oxy position
   )
 
-#_(deftest t
-    (let [program (parse-program (slurp "resources/day15input"))]
-      (is (= 248 (count (search [[[] (boot2 program) [[0 0] #{}]]] 0 #{}))))))
+(deftest t
+  (is (= 248 (count (first (search [[[] start-robot]] #{}))))))
 
 (comment
   "Part 2
@@ -79,67 +67,44 @@
    Use the repair droid to get a complete map of the area. How many minutes 
    will it take to fill with oxygen?")
 
-(def start-robot {:position [0 0] :computer (boot2 program)})
-
-(defn possible-moves2 [robot]
-  (filter (fn [dir] (not= 0 (first (:outputs (resume2 (:computer robot) dir))))) [1 2 3 4]))
-
-(defn move2 [robot dir]
-  (-> robot
-      (update :position move dir)
-      (update :computer resume2 dir)))
-
-(comment
-  (possible-moves2 start-robot)
-
-  (move2 start-robot 3))
-
 (def reverse-direction {1 2 2 1 3 4 4 3})
+
+(defn possible-moves [robot]
+  (remove (fn [dir] (= :hit-wall (:last-action (move-robot robot dir)))) [1 2 3 4]))
 
 (defn find-next-edge
   ([robot dir] (find-next-edge robot dir (:position robot) 0 [(:position robot)]))
   ([robot dir start length path]
-   (let [new-robot (move2 robot dir)
-         moves (set (possible-moves2 new-robot))]
+   (let [new-robot (move-robot robot dir)
+         moves (possible-moves new-robot)]
      (if (= 2 (count moves))
        (recur new-robot
               (first (remove #(= (reverse-direction dir) %) moves))
               start
               (inc length)
               (conj path (:position new-robot)))
+       ;; returns an edge [start end length robot path]
        [start (:position new-robot) (inc length) new-robot (conj path (:position new-robot))]))))
 
-(comment
-  (possible-moves2 start-robot)
-  (find-next-edge start-robot 3 [0 0] 0 []))
-
-(defn have-edge? [edges edge]
+(defn known-edge? [edges edge]
   (let [e (map #(take 2 %) edges)
         re (map reverse e)]
     ((set (concat e re))
      (take 2 edge))))
 
-(defn map-space [robot edges [nxt-edge & rst] it]
-  (cond (> it 1000) :break
-        nxt-edge
-        (recur (nth nxt-edge 3)
-               (conj edges nxt-edge)
-               (concat rst (remove #(have-edge? edges %)
-                                   (map #(find-next-edge (nth nxt-edge 3) %
-                                                         (:position (nth nxt-edge 3)) 0
-                                                         [(:position (nth nxt-edge 3))])
-                                        (possible-moves2 (nth nxt-edge 3)))))
-               (inc it))
-        :else (let [new-edges (remove #(have-edge? edges %)
-                                      (map #(find-next-edge robot % (:position robot) 0 [(:position robot)])
-                                           (possible-moves2 robot)))]
-                (if (empty? new-edges)
-                  edges
-                  (recur robot edges new-edges (inc it))))))
+;; pretty sure I'm missing something important with the else on this, feels wrong.
+(defn map-space [robot edges [next-edge & other-edges]]
+  (let [new-robot (if next-edge (nth next-edge 3) robot)
+        new-edges (->> (possible-moves new-robot)
+                       (map #(find-next-edge new-robot %))
+                       (remove #(known-edge? edges %)))]
+    (cond next-edge (recur new-robot (conj edges next-edge) (concat other-edges new-edges))
+          (empty? new-edges) edges
+          :else     (recur new-robot edges new-edges))))
 
 (comment
   ;; generate the edges - slow!
-  (time (def map-edges (map-space start-robot [] [] 0)))
+  (time (def map-edges (map-space start-robot [] [])))
 
   (count map-edges)
   ;; => 178
@@ -148,12 +113,12 @@
     (let [[srt end dst robot] edge]
       {:edge-end end
        :edge-start srt
-       :moves (possible-moves2 robot)
+       :moves (possible-moves robot)
        :dist dst}))
 
-  (map interrogate-edge map-edges)
+  (map interrogate-edge (take 2 map-edges))
 
-  ;; from part 1 oxygen is at -20 12
+  ;; from part 1 oxygen is at -20 12. Need to normalize
   [(+ 20 -20) (+ 18 12)]
   ;; => [0 30]
 
