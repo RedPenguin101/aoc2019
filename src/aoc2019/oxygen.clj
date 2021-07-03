@@ -3,22 +3,14 @@
             [aoc2019.intcode :refer [parse-program boot2 resume]]
             [clojure.set :refer [intersection union difference]]))
 
-"program loop
- * accept a movement command
- * move
- * report status
- 
- Move commands: 1234 = NSWE
- status codes:
- 0: wall, position not changed
- 1: moved
- 2: moved, current pos is oxy system
- 
- What is the fewest number of movement commands"
-
 (def program (parse-program (slurp "resources/day15input")))
 
-(def start-robot {:position [0 0] :computer (boot2 program)})
+;; Robot execution
+
+;; A Robot is its current position, it's onboard computer and it's last status
+(def start-robot {:position [0 0]
+                  :computer (boot2 program)
+                  :last-status :none})
 
 (defn move [[x y] command]
   (case command
@@ -27,25 +19,33 @@
     3 [(dec x) y]
     4 [(inc x) y]))
 
-(defn move-robot [robot dir]
+(defn move-robot
+  "Returns the state of the robot after moving it in the given direction command.
+   If the robot hits a wall, it will be in the same position it started."
+  [robot dir]
   (let [new-comp (resume (:computer robot) dir)
-        status (first (:outputs new-comp))]
+        status   (first (:outputs new-comp))]
     (case status
-      0 (-> robot (assoc :computer new-comp) (assoc :last-action :hit-wall))
-      1 (-> robot (update :position move dir) (assoc :computer new-comp) (assoc :last-action :moved))
-      2 (-> robot (update :position move dir) (assoc :computer new-comp) (assoc :last-action :found-oxy)))))
+      0 (-> robot (assoc  :computer new-comp) (assoc :last-status :hit-wall))
+      1 (-> robot (update :position move dir) (assoc :computer new-comp) (assoc :last-status :moved))
+      2 (-> robot (update :position move dir) (assoc :computer new-comp) (assoc :last-status :found-oxy)))))
 
-(defn new-paths [path robot moves]
+;; Part 1: Search
+
+(comment "What is the fewest number of movement commands to reach the oxy source?")
+
+(defn new-routes [previous-moves robot moves]
   (for [move moves
         :let [new-robot (move-robot robot move)]
-        :when (not= :hit-wall (:last-action new-robot))]
-    [(conj path move) new-robot]))
+        :when (not= :hit-wall (:last-status new-robot))]
+    [(conj previous-moves move) new-robot]))
 
+;; A path is a tuple of [previous-commands robot-state-after-those-commands]
 (defn search [paths visited]
-  (let [[path robot] (first paths)]
-    (cond (= :found-oxy (:last-action robot)) [path (:position robot)]
+  (let [[previous-moves robot] (first paths)]
+    (cond (= :found-oxy (:last-status robot)) [previous-moves (:position robot)]
           (visited (:position robot)) (recur (rest paths) visited)
-          :else (recur (concat (rest paths) (new-paths path robot [1 2 3 4]))
+          :else (recur (concat (rest paths) (new-routes previous-moves robot [1 2 3 4]))
                        (conj visited (:position robot))))))
 
 (comment
@@ -59,6 +59,8 @@
 (deftest t
   (is (= 248 (count (first (search [[[] start-robot]] #{}))))))
 
+;; Part 2: Graph
+
 (comment
   "Part 2
    It takes one minute for oxygen to spread to all open locations that 
@@ -67,23 +69,27 @@
    Use the repair droid to get a complete map of the area. How many minutes 
    will it take to fill with oxygen?")
 
-(def reverse-direction {1 2 2 1 3 4 4 3})
-
 (defn possible-moves [robot]
-  (remove (fn [dir] (= :hit-wall (:last-action (move-robot robot dir)))) [1 2 3 4]))
+  (remove #(= :hit-wall (:last-status (move-robot robot %))) [1 2 3 4]))
 
 (defn find-next-edge
+  "Given an robot and a direction, the robot will follow the maze in that direction until
+   it hits a dead end (i.e. has 1 possible move) or a decision point (i.e. has more than 2)
+   possible moves. When it finds the decision point it returns an edge: a tuple of
+      start-coord 
+      end-coord 
+      length-of-walk 
+      robot-state-at-end 
+      path-of-coords-walked"
   ([robot dir] (find-next-edge robot dir (:position robot) 0 [(:position robot)]))
   ([robot dir start length path]
    (let [new-robot (move-robot robot dir)
-         moves (possible-moves new-robot)]
+         moves (possible-moves new-robot)
+         reverse-direction {1 2 2 1 3 4 4 3}]
      (if (= 2 (count moves))
        (recur new-robot
               (first (remove #(= (reverse-direction dir) %) moves))
-              start
-              (inc length)
-              (conj path (:position new-robot)))
-       ;; returns an edge [start end length robot path]
+              start (inc length) (conj path (:position new-robot)))
        [start (:position new-robot) (inc length) new-robot (conj path (:position new-robot))]))))
 
 (defn known-edge? [edges edge]
@@ -101,6 +107,20 @@
     (cond next-edge (recur new-robot (conj edges next-edge) (concat other-edges new-edges))
           (empty? new-edges) edges
           :else     (recur new-robot edges new-edges))))
+
+(defn adjacents
+  [[x y]]
+  [[x (inc y)]
+   [x (dec y)]
+   [(dec x) y]
+   [(inc x) y]])
+
+;; who needs connectivity algorithms!
+(defn flow [oxy-full not-full it]
+  (if (empty? not-full) it
+      (let [adj (set (mapcat adjacents oxy-full))
+            new-full (intersection adj not-full)]
+        (recur (union oxy-full new-full) (difference not-full new-full) (inc it)))))
 
 (comment
   ;; generate the edges - slow!
@@ -126,6 +146,7 @@
   ;; => 799
 
   ;; generating the maze - -20/-18 are the min x/y coords, so normalize on that. 
+  ;; #=wall, _=floor, *=oxy-source
   (let [floors (set (mapcat last map-edges))
         floors (map (fn [[x y]] [(+ 20 x) (+ 18 y)]) floors)
         grid (vec (repeat 39 (vec (repeat 39 "#"))))]
@@ -174,28 +195,11 @@
   ;;     "_#___#___#___#_#_______#_#_#___#_______"
   ;;     "_###_###_#_#_###_#_#####_#_###########_"
   ;;     "_______#___#_____#_________#___________")
-  )
 
-(defn adjacents
-  [[x y]]
-  [[x (inc y)]
-   [x (dec y)]
-   [(dec x) y]
-   [(inc x) y]])
 
-;; who needs connectivity algorithms!
-(defn flow [oxy-full not-full it]
-  (if (empty? not-full) it
-      (let [adj (set (mapcat adjacents oxy-full))
-            new-full (intersection adj not-full)]
-        (recur (union oxy-full new-full) (difference not-full new-full) (inc it)))))
-
-(comment
   (time (let [floors (set (mapcat last map-edges))
               floors (set (map (fn [[x y]] [(+ 20 x) (+ 18 y)]) floors))
               oxy [0 30]]
           (flow #{oxy} floors 0)))
   ;; => 382
   )
-
-
