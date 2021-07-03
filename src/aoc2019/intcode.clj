@@ -230,6 +230,12 @@
   ([program] (resume {:pointer 0 :memory program :base 0 :outputs [] :inputs []}))
   ([program inputs] (resume {:pointer 0 :memory program :inputs inputs :base 0 :outputs []})))
 
+(defn boot2
+  [program] {:pointer 0 :memory program :base 0 :outputs [] :inputs []})
+
+(defn resume2 [computer input]
+  (resume (assoc computer :inputs [input] :outputs [])))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; TESTS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;
