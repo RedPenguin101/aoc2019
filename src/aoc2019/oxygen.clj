@@ -99,7 +99,8 @@
      (take 2 edge))))
 
 ;; pretty sure I'm missing something important with the else on this, feels wrong.
-(defn map-space [robot edges [next-edge & other-edges]]
+(defn map-space "returns every edge in the maze"
+  [robot edges [next-edge & other-edges]]
   (let [new-robot (if next-edge (nth next-edge 3) robot)
         new-edges (->> (possible-moves new-robot)
                        (map #(find-next-edge new-robot %))
