@@ -25,13 +25,18 @@
    What is the sum of the alignment parameters
    ")
 
-(def ascii {10 \newline 35 \# 44 \, 46 \. 48 \0 49 \1 50 \2 51 \3 52 \4 53 \5 54 \6 55 \7 56 \8 57 \9 58 \: 60 \< 62
-            \> 65 \A 66 \B 67 \C 68 \D 69 \E 70 \F 71 \G 72 \H 73 \I 74 \J 75 \K 76 \L 77 \M 78 \N 79 \O 80
-            \P 81 \Q 82 \R 83 \S 84 \T 85 \U 86 \V 87 \W 88 \X 89 \Y 90 \Z 94 \^ 97 \a 105 \i 110 \n 118 \v})
+(def int->ascii {10 \newline 35 \# 44 \, 46 \.
+                 48 \0 49 \1 50 \2 51 \3 52 \4 53 \5 54 \6 55 \7 56 \8 57 \9
+                 58 \: 60 \< 62 \>
+                 65 \A 66 \B 67 \C 68 \D 69 \E 70 \F 71 \G 72 \H 73 \I 74 \J 75 \K 76 \L 77 \M 78 \N 79 \O
+                 80 \P 81 \Q 82 \R 83 \S 84 \T 85 \U 86 \V 87 \W 88 \X 89 \Y 90 \Z
+                 94 \^ 97 \a 105 \i 110 \n 118 \v})
+
+(def ascii->int (set/map-invert int->ascii))
 
 (defn output->screen [output]
   (->> output
-       (map ascii)
+       (map int->ascii)
        (apply str)
        (clojure.string/split-lines)))
 
@@ -68,13 +73,44 @@
    
    After visiting every part of the scaffold at least once, what value does it output?")
 
-(defn find-robot [coord-map] (first (select-keys (set/map-invert coord-map) [\v \^ \< \>])))
+(defn separate-ascii [chars next]
+  (let [nums (set "1234567890")]
+    (if (or (empty? chars) (and (nums next) (nums (last chars))))
+      (conj chars next)
+      (conj chars \, next))))
 
 (comment
+  "The screen"
   (drop-last 2 (output->screen (:outputs (resume (boot2 (assoc program 0 2))))))
 
-  (-> (drop-last 2 (output->screen (:outputs (resume (boot2 (assoc program 0 2))))))
-      coordinate
-      find-robot)
+  (set (:outputs (resume (boot2 (assoc program 0 2)))))
 
-  (set (:outputs (resume (boot2 (assoc program 0 2))))))
+  "Just eyeballed it and fiddled with the permutations"
+  '[(A) R12L8L4L4
+    (B) L8R6L6
+    (A) R12L8L4L4
+    (B) L8R6L6
+    (C) L8L4R12L6L4
+    (A) R12L8L4L4
+    (C) L8L4R12L6L4
+    (A) R12L8L4L4
+    (C) L8L4R12L6L4
+    (B) L8R6L6]
+
+  (def move-fns {\A "R12L8L4L4"
+                 \B "L8R6L6"
+                 \C "L8L4R12L6L4"})
+
+  (def routine "ABABCACACB")
+
+  (apply str (mapcat move-fns routine))
+  (reduce separate-ascii [] routine)
+  (map #(reduce separate-ascii [] %) (vals move-fns))
+
+  (def inputs
+    (mapv ascii->int
+          (concat (conj (reduce separate-ascii [] routine) \newline)
+                  (mapcat #(conj (reduce separate-ascii [] %) \newline) (vals move-fns))
+                  [\n \newline])))
+
+  (last (:outputs (resume (assoc (resume (boot2 (assoc program 0 2))) :outputs [] :inputs inputs)))))
