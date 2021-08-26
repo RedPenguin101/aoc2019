@@ -30,7 +30,7 @@
    performance issues, we can refine our estimate progressively"
 
   "We could improve further with a O(logn) squeezing thing instead of the O(n) inc y, 
-  but probably not worth it.")
+   but probably not worth it.")
 
 (defn upper-y
   ([x] (upper-y x (int (/ (* 1154 x) 1000))))
@@ -95,10 +95,26 @@
           :else 0)))
 
 (comment
-  (time (squeeze over-under avg 100))
+  (time (squeeze over-under avg 900))
+
   "Elapsed time: 426.602073 msecs"
   ;; => [937 1082]
 
   (+ (* (- 937 99) 10000) 1082)
   ;; => 8381082
+
+  "Note this isn't airtight, since there is more than 1 'solution' to this problem
+   x=940 is the other one.
+   I could put in more work to 'check down' more than one thing, but meh"
+
+  (over-under 940)
+  ;; => 0
+
+  (let [sq100 (fn [x y] (pulled? (- x 99) (+ y 99)))]
+    (for [x (range 935 943)]
+      [x (sq100 x (upper-y x))]))
+  ;; => ([935 false] [936 false] 
+  ;;     [937 true] 
+  ;;     [938 false] [939 false] 
+  ;;     [940 true] [941 true] [942 true])
   )
