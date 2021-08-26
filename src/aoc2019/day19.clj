@@ -1,7 +1,7 @@
 (ns aoc2019.day19
   (:require
    [aoc2019.coordinate :as co]
-   [aoc2019.intcode :refer [parse-program boot2 run-program2 resume]]))
+   [aoc2019.intcode :refer [parse-program run-program2]]))
 
 (def program (parse-program (slurp "resources/day19input")))
 
@@ -16,112 +16,54 @@
 
   (doall (map println (co/de-coordinate result))))
 
+(defn pulled? [x y] (= 1 (first (:outputs (run-program2 program [x y])))))
+
 (comment
-  "Part 2
- The beam gets wider as it travels away from the emitter;
- need to be a minimum distance away to fit a square of that size into the beam
- Find the 100x100 square closest to the emitter that fits entirely within the tractor beam;
- find the point closest to the emitter. 
- X*10000 + Y"
+  (defn upper-y*
+    ([x] (upper-y* x x))
+    ([x y] (if (pulled? x y) y
+               (recur x (inc y)))))
 
-  "Obviously too big to brute force.
- need to figure out the equation for each 'edge' of the beam and maybe have
- some function 'is-on-edge? :: eq coord -> bool'
- I think it's right to say that the top right and bottom left points of the square
- will be on the respective edges, so you should be able to 'follow' the beam down
- and test until you get it."
+  (upper-y* 10000)
+  ;; "Elapsed time: 10284.355772 msecs"
+  ;; => 11547
 
-  ()
+  "This takes much too long - a starting assumption of x=y is no good. But we can improve it
+   pretty easily by saying y=ax, 11547=a10000, a=11547/10000. Using a as our staring point, and 
+   rounding down, should give us better performance. Actually round it down a bit so we don't 
+   accidentally overshoot: a=1154/1000
+   
+   This gives a time of ~4200ms for an x of 10e6. This should be fine, but if we still see 
+   performance issues, we can refine our estimate progressively")
 
-  (doall
-   (map println
-        (co/de-coordinate (into {} (for [row (sort (group-by (comp second first) (filter #(= "#" (val %)) result)))]
-                                     [[(first (ffirst (sort-by ffirst (second row)))) (first row)] "#"]))
-                          ".")))
+(defn upper-y
+  ([x] (upper-y x (int (/ (* 1154 x) 1000))))
+  ([x y] (if (pulled? x y) y (recur x (inc y)))))
 
-  (doall
-   (map println
-        (co/de-coordinate (into {} (for [row (sort (group-by (comp second first) (filter #(= "#" (val %)) result)))]
-                                     [[(first (ffirst (reverse (sort-by ffirst (second row))))) (first row)] "*"]))
-                          ".")))
+(defn avg [x y] (int (/ (+ x y) 2)))
 
-  (remove nil? (doall (map println (co/de-coordinate (merge
-                                                      (into {} (for [row (sort (group-by (comp second first) (filter #(= "#" (val %)) result)))]
-                                                                 [[(first (ffirst (reverse (sort-by ffirst (second row))))) (first row)] "*"]))
-                                                      (into {} (for [row (sort (group-by (comp second first) (filter #(= "#" (val %)) result)))]
-                                                                 [[(first (ffirst (sort-by ffirst (second row)))) (first row)] "#"])))
-                                                     "."))))
+(defn over-under [x]
+  (let [square100? (fn [x y] (pulled? (- x 99) (+ y 99))) ;; keeping local scope for this fn
+        fits-100-square? (square100? x (upper-y x))]
+    (cond (not fits-100-square?) :under-shoot
+          (and fits-100-square? (square100? (dec x) (upper-y (dec x)))) :over-shoot
+          :else :found)))
 
-  (last (for [row (sort (group-by (comp second first) (filter #(= "#" (val %)) result)))]
-          [[(first (ffirst (sort-by ffirst (second row)))) (first row)] "#"]))
-  ;; => [[35 49] "#"] => x=35, y=49
+(defn find-100-square
+  ([x] (find-100-square x 0 nil))
+  ([x lb ub]
+   (case (over-under x)
+     :under-shoot (recur (if ub (avg x ub) (* 2 x)) x ub) ;; guarding for a nil upper bound
+     :over-shoot  (recur        (avg x lb)          lb x)
+     :found       [x (upper-y x)])))
 
-  "y=49/35 * x"
-  "x=35/49 * y"
+(comment
+  (time (find-100-square 100))
+  "Elapsed time: 426.602073 msecs"
+  ;; => [937 1082]
 
-  (def lower-edge (for [row (sort (group-by (comp second first) (filter #(= "#" (val %)) result)))]
-                    [(first (ffirst (sort-by ffirst (second row))))
-                     (first row)]))
+  (+ (* (- 937 99) 10000) 1082)
+  ;; => 8381082
+  )
 
-  (def upper-edge (for [row (sort (group-by (comp second first) (filter #(= "#" (val %)) result)))]
-                    [(first (ffirst (reverse (sort-by ffirst (second row)))))
-                     (first row)]))
-  lower-edge
-  upper-edge
-
-  (for [coord lower-edge]
-    (let [calc-x #(long (Math/ceil (* % (/ 350 490))))
-          x (first coord)
-          y (second coord)
-          calced-x (calc-x y)]
-      [x y calced-x (cond (> calced-x x) :calced-too-high
-                          (< calced-x x) :calced-too-low
-                          :else :OK)]))
-
-
-  (defn test-calc [reference a b]
-    (let [calc-x #(long (Math/ceil (* % (/ a b))))]
-      (frequencies (map (fn [[x y]]
-                          (cond (> (calc-x y) x) :too-high
-                                (< (calc-x y) x) :too-low
-                                :else :ok))
-                        reference))))
-
-  (test-calc lower-edge 35 49)
-
-  (defn direction [results]
-    (cond (:too-high results) :too-high
-          (:too-low results) :too-low
-          :else :ok))
-
-  (defn refine-calc [reference-coords a b prev it]
-    (let [results (test-calc reference-coords a b)
-          dir (direction results)
-          flipped? (not= dir prev)]
-      (cond
-        (> it 100) :break
-        (= (count reference-coords) (:ok results)) [a b]
-        (and (:too-high results) (:too-low results)) [:shit! a b]
-
-        (and flipped? (= :too-high prev)) (recur reference-coords (inc (* 2 a)) (* 2 b) dir (inc it))
-        (and flipped? (= :too-low prev))  (recur reference-coords (dec (* 2 a)) (* 2 b) dir (inc it))
-
-        (:too-high results) (recur reference-coords (dec a) b dir (inc it))
-        (:too-low results)  (recur reference-coords (inc a) b dir (inc it)))))
-
-  (refine-calc lower-edge 50 50 :too-high 0)
-  ;; => [567 800]
-  (test-calc lower-edge 567 800)
-  ;; => {:ok 47}
-
-  (refine-calc upper-edge 42 49 :too-high 0)
-  ;; => :shit!
-  (test-calc upper-edge 41 49)
-
-  (into {} (map #(vector [(long (Math/ceil (* % (/ 41 49)))) %] "#") (range 50)))
-
-  (co/print-grid (co/de-coordinate (merge (into {} (map #(vector [(long (Math/ceil (* % (/ 41 49)))) %] "#") (range 50)))
-                                          (into {} (for [row (sort (group-by (comp second first) (filter #(= "#" (val %)) result)))]
-                                                     [[(first (ffirst (reverse (sort-by ffirst (second row))))) (first row)] "*"])))
-                                   ".")))
 
