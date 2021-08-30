@@ -82,5 +82,62 @@
   (bio-rate (find-loop (start-state example) #{}))
   (bio-rate (find-loop (start-state input) #{})))
 
+(defn left-side [cells]   (filter #(= 0 (first %)) cells))
+(defn right-side [cells]  (filter #(= 4 (first %)) cells))
+(defn top-side [cells]    (filter #(= 0 (second %)) cells))
+(defn bottom-side [cells] (filter #(= 4 (second %)) cells))
 
+(defn neighbours-multi [grids level [x y :as cell]]
+  (+ (neighbours cell (grids level))
+     (count (case cell
+              [2 1] (top-side (grids (dec level)))
+              [2 3] (bottom-side (grids (dec level)))
+              [1 2] (left-side (grids (dec level)))
+              [3 2] (right-side (grids (dec level)))
+              #{}))
+     (count (set/intersection
+             (grids (inc level))
+             (set [(when (= x 0) [1 2])
+                   (when (= x 4) [3 2])
+                   (when (= y 0) [2 1])
+                   (when (= y 4) [2 3])])))))
 
+(def all-coords
+  (set (for [x (range 0 5)
+             y (range 0 5)
+             :when (not= x y 2)]
+         [x y])))
+
+(defn step-1-level [grids level]
+  (let [living (or (grids level) #{})]
+    (->> all-coords
+         (keep #(case (neighbours-multi grids level %)
+                  1 %
+                  2 (when-not (living %) %)
+                  nil))
+         (set))))
+
+(defn new-lvls [lvls]
+  (let [x (sort lvls) min (first x) max (last x)]
+    (range (dec min) (+ 2 max))))
+
+(defn step-all-levels [grids]
+  (into {} (remove
+            (comp empty? second)
+            (let [nl (new-lvls (keys grids))
+                  new-grids (assoc grids
+                                   (last nl) #{}
+                                   (first nl) #{})]
+              (for [lvl nl]
+                [lvl (step-1-level new-grids lvl)])))))
+
+(comment
+  (step-all-levels {0 (start-state example)})
+
+  (last (take 11 (iterate step-all-levels {0 (start-state example)})))
+
+  (apply + (map count (vals (last (take 11 (iterate step-all-levels {0 (start-state example)}))))))
+
+  (sort (last (take 7 (iterate step-all-levels {0 (start-state input)}))))
+
+  (apply + (map count (vals (last (take 201 (iterate step-all-levels {0 (start-state input)})))))))
