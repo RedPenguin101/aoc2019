@@ -11,3 +11,4 @@
 .hg/
 .lsp
 .calva
+.clj-kondo
